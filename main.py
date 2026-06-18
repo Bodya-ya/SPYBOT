@@ -618,14 +618,10 @@ async def activate_trial(user_id):
         """, (user_id,))
         had_trial = (await cursor.fetchone())[0] > 0
 
-        print(f"🔍 user_id={user_id}, had_trial={had_trial}")  # ← ЛОГ
-
         if had_trial:
-            print("❌ Триал уже использован")
             return False
 
         expires_at = datetime.now() + timedelta(days=365)
-        print(f"✅ Активирую триал до {expires_at}")  # ← ЛОГ
 
         await db.execute("""
         INSERT OR REPLACE INTO subscriptions (user_id, plan, expires_at, active, is_trial)
@@ -633,7 +629,6 @@ async def activate_trial(user_id):
         """, (user_id, expires_at.strftime("%Y-%m-%d %H:%M:%S")))
 
         await db.commit()
-        print("✅ Триал сохранен в БД")  # ← ЛОГ
         return True
 
 
@@ -665,9 +660,6 @@ async def check_subscription(user_id):
             LIMIT 1
         """, (user_id,))
         row = await cursor.fetchone()
-
-        print(f"🔍 check_subscription user_id={user_id}, row={row}")  # ← ЛОГ
-
         if not row:
             return None
 
