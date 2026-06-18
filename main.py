@@ -457,7 +457,8 @@ async def init_db():
                 'content': 'TEXT',
                 'file_id': 'TEXT',
                 'caption': 'TEXT',
-                'username': 'TEXT'
+                'username': 'TEXT',
+                'chat_name': 'TEXT'
             }
 
             for col_name, col_type in new_columns.items():
@@ -517,8 +518,8 @@ async def save_message(data):
     async with aiosqlite.connect(DB) as db:
         await db.execute("""
         INSERT OR REPLACE INTO messages
-        (business_connection_id, message_id, chat_id, user_id, user_name, username, message_type, content, file_id, caption, is_from_owner)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (business_connection_id, message_id, chat_id, user_id, user_name, username, message_type, content, file_id, caption, is_from_owner, chat_name)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             data["business_connection_id"],
             data["message_id"],
@@ -530,7 +531,8 @@ async def save_message(data):
             data.get("content", ""),
             data.get("file_id"),
             data.get("caption"),
-            data.get("is_from_owner", False)
+            data.get("is_from_owner", False),
+            data.get("chat_name"),
         ))
         await db.commit()
 
@@ -703,7 +705,7 @@ def require_subscription(func):
 async def get_message(message_id, chat_id):
     async with aiosqlite.connect(DB) as db:
         cursor = await db.execute("""
-            SELECT user_id, user_name, username, content, created_at, is_from_owner, message_type, file_id, caption, business_connection_id 
+            SELECT user_id, user_name, username, content, created_at, is_from_owner, message_type, file_id, caption, business_connection_id, chat_name
             FROM messages
             WHERE message_id = ? AND chat_id = ?
         """, (message_id, chat_id))
@@ -725,7 +727,7 @@ from datetime import datetime, timedelta
 
 
 def format_deleted_message(user_name, content, message_type="text", chat_id=None, created_at=None, user_id=None,
-                           username=None, caption=None):
+                           username=None, caption=None, is_owner=False, chat_name=None):
     time_str = ""
     signature = ""
     if created_at:
@@ -758,6 +760,7 @@ def format_deleted_message(user_name, content, message_type="text", chat_id=None
     safe_content = html.escape(content) if content else ""
     safe_username = html.escape(username) if username else None
     safe_caption = html.escape(caption) if caption else None
+    safe_chat_name = html.escape(chat_name) if chat_name else None
 
     # Формируем информацию о пользователе
     user_info = f"{safe_user_name}"
@@ -769,15 +772,20 @@ def format_deleted_message(user_name, content, message_type="text", chat_id=None
         content_part = f"💬 <b>Текст:</b>\n<blockquote>{safe_content}</blockquote>\n"
     else:
         # Для медиа — описание обычным текстом
-        content_part = f"{safe_content}\n"
+        content_part = f"<b>{safe_content}</b>\n"
 
         # Подпись к медиа — в цитате (если есть)
         if safe_caption:
             signature = f"\n💬 <b>Подпись:</b>\n<blockquote>{safe_caption}</blockquote>\n"
-    return (
-        f"<b>{user_info}удалил(a) \n\n{content_part}</b>"
-        f"{signature}\n"
-    )
+
+    chat_info = f" в чате с @{safe_chat_name}" if safe_chat_name else ""
+
+    if is_owner:
+        header = f"<b>Удалено ваше сообщение{chat_info}</b>"
+    else:
+        header = f"<b>{user_info}удалил(а)</b>"
+
+    return f"{header}\n\n{content_part}\n{signature}"
 
 
 def format_edited_message(user_name, old_content, new_content, message_type="text", chat_id=None, user_id=None,
@@ -1170,7 +1178,14 @@ async def handle_business_message(message: Message):
     owner_id = await get_owner_by_business_connection(message.business_connection_id)
     if not owner_id:
         return
-
+    if message.chat.title:
+        chat_name = message.chat.title
+    else:
+        # Личный чат — username чата (собеседника)
+        if message.chat.username:
+            chat_name = f"{message.chat.username}"
+        else:
+            chat_name = message.chat.first_name or message.chat.full_name or f"Чат {message.chat.id}"
     msg_info = get_message_type_info(message)
     is_from_owner = (message.from_user.id == owner_id)
 
@@ -1185,7 +1200,8 @@ async def handle_business_message(message: Message):
         "content": msg_info.get("content", ""),
         "file_id": msg_info.get("file_id"),
         "caption": msg_info.get("caption"),
-        "is_from_owner": is_from_owner
+        "is_from_owner": is_from_owner,
+        "chat_name": chat_name,
     })
 
 
@@ -1254,26 +1270,30 @@ async def handle_deleted_business_messages(deleted_messages: BusinessMessagesDel
         msg_data = await get_message(msg_id, chat_id)
 
         if msg_data:
-            # Должно быть 10 значений (с username)
-            user_id, user_name, username, content, created_at, is_from_owner, msg_type, file_id, caption, _ = msg_data
+            user_id, user_name, username, content, created_at, is_from_owner, msg_type, file_id, caption, _, chat_name = msg_data
 
-            if not is_from_owner:
-                if sub:
-                    notification = format_deleted_message(
-                        user_name, content, msg_type, chat_id, created_at, user_id, username, caption
-                    )
-                    await notify_owner_with_media(owner_id, notification, file_id, msg_type, caption)
-                else:
-                    # Без подписки — только факт удаления + предложение оплатить
-                    notification = format_deleted_message_limited(
-                        user_name, msg_type, chat_id
-                    )
-                    await bot.send_message(
-                        chat_id=owner_id,
-                        text=notification,
-                        reply_markup=startmenu(),
-                        parse_mode=ParseMode.HTML
-                    )
+            if sub:
+                notification = format_deleted_message(
+                    user_name=user_name,
+                    content=content,
+                    message_type=msg_type,
+                    chat_id=chat_id,
+                    created_at=created_at,
+                    user_id=user_id,
+                    username=username,
+                    caption=caption,
+                    is_owner=is_from_owner,
+                    chat_name=chat_name  # ← ДОБАВИЛ
+                )
+                await notify_owner_with_media(owner_id, notification, file_id, msg_type, caption)
+            else:
+                notification = format_deleted_message_limited(user_name, msg_type, chat_id)
+                await bot.send_message(
+                    chat_id=owner_id,
+                    text=notification,
+                    reply_markup=startmenu(),
+                    parse_mode=ParseMode.HTML
+                )
 
 
 
