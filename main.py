@@ -1444,11 +1444,19 @@ async def show_users_list(callback, users, title):
         user_type = "🚀 Бизнес" if user_data.get("type") == "business" else "👋 Старт"
         joined = user_data.get("joined_at", "Неизвестно")
 
+        async with aiosqlite.connect(DB) as db:
+            cursor = await db.execute(
+                "SELECT COUNT(*) FROM business_connections WHERE owner_id = ?",
+                (int(user_id),)
+            )
+            connected = (await cursor.fetchone())[0] > 0
+
+        user_type = "🚀 Бизнес" if connected else "👋 Старт"
+
         text += f"🆔 <code>{user_id}</code>\n"
         text += f"👤 {name} {safe_username}\n"
         text += f"📌 {user_type}\n"
         text += f"📅 {joined}\n\n"
-        text += f"📆 Осталось дней: {sub['days_left']}"
 
     await callback.message.edit_text(
         text,
