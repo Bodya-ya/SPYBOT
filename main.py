@@ -1341,7 +1341,6 @@ async def handle_deleted_business_messages(deleted_messages: BusinessMessagesDel
     bcid = deleted_messages.business_connection_id
     chat_id = deleted_messages.chat.id
     print(f"🗑 DELETED: {deleted_messages.message_ids}")
-    print(f"🗑 owner_id: {owner_id}")
     owner_id = await get_owner_by_business_connection(bcid)
     if not owner_id:
         return
