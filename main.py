@@ -1343,19 +1343,6 @@ async def handle_deleted_business_messages(deleted_messages: BusinessMessagesDel
 
     owner_id = await get_owner_by_business_connection(bcid)
     if not owner_id:
-        try:
-            await bot.send_message(
-                business_connection_id=bcid,
-                chat_id=chat_id,
-                text="⚠️ <b>Бот не привязан к владельцу!</b>\n\n"
-                     "Пожалуйста, переподключите бота:\n"
-                     "1. Настройки → Telegram Business\n"
-                     "2. Бизнес-боты → Удалить бота\n"
-                     "3. Добавить заново @EyellizSPY_BOT",
-                parse_mode=ParseMode.HTML
-            )
-        except Exception as e:
-            logger.error(f"Не удалось отправить уведомление в чат: {e}")
         return
 
     sub = await check_subscription(owner_id)
