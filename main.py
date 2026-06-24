@@ -121,21 +121,9 @@ def get_stats():
     """Статистика по типам пользователей"""
     data = load_users()
     total = len(data["users"])
-
-    # Считаем реальные подключения из БД
-    import asyncio
-    async def _count_business():
-        async with aiosqlite.connect(DB) as db:
-            cursor = await db.execute("SELECT COUNT(DISTINCT owner_id) FROM business_connections")
-            return (await cursor.fetchone())[0]
-
-    try:
-        loop = asyncio.get_event_loop()
-        business_count = loop.run_until_complete(_count_business())
-    except:
-        business_count = 0
-
-    start_count = total - business_count
+    start_count = sum(1 for u in data["users"].values() if u.get("type") == "start")
+    business_count = sum(1 for u in data["users"].values() if u.get("type") == "business")
+    both_count = total - start_count - business_count  # Те, у кого другой тип
 
     return {
         "total": total,
@@ -1815,19 +1803,22 @@ async def show_stats(callback: types.CallbackQuery):
         await callback.answer("❌ Нет доступа", show_alert=True)
         return
 
-    stats = get_stats()
+    data = load_users()
+    total = len(data["users"])
 
     async with aiosqlite.connect(DB) as db:
-        cursor = await db.execute("SELECT COUNT(*) FROM business_connections")
-        total_connections = (await cursor.fetchone())[0]
+        cursor = await db.execute("SELECT COUNT(DISTINCT owner_id) FROM business_connections")
+        business_count = (await cursor.fetchone())[0]
+
         cursor = await db.execute("SELECT COUNT(*) FROM messages")
         total_messages = (await cursor.fetchone())[0]
 
+    start_count = total - business_count
+
     text = "📊 <b>Статистика:</b>\n\n"
-    text += f"👥 Всего: {stats['total']}\n"
-    text += f"🚀 Бизнес: {stats['business']}\n"
-    text += f"👋 Старт: {stats['start']}\n"
-    text += f"🔗 Подключений: {total_connections}\n"
+    text += f"👥 Всего: {total}\n"
+    text += f"🚀 Бизнес: {business_count}\n"
+    text += f"👋 Старт: {start_count}\n"
     text += f"💬 Сообщений: {total_messages}\n"
 
     await callback.message.edit_text(text, reply_markup=get_back_keyboard(), parse_mode=ParseMode.HTML)
@@ -1840,19 +1831,22 @@ async def refresh_panel(callback: types.CallbackQuery):
         await callback.answer("❌ Нет доступа", show_alert=True)
         return
 
-    stats = get_stats()
+    data = load_users()
+    total = len(data["users"])
 
-    # Добавляем время обновления чтобы текст всегда был разным
-    from datetime import datetime
-    now = datetime.now().strftime("%H:%M:%S")
+    async with aiosqlite.connect(DB) as db:
+        cursor = await db.execute("SELECT COUNT(DISTINCT owner_id) FROM business_connections")
+        business_count = (await cursor.fetchone())[0]
+
+    start_count = total - business_count
 
     await callback.message.edit_text(
         f"🔐 <b>Админ-панель EyellizSPY</b>\n\n"
-        f"👥 Пользователей: {stats['total']}\n"
-        f"🚀 Бизнес: {stats['business']}\n"
-        f"👋 Старт: {stats['start']}\n\n"
+        f"👥 Всего: {total}\n"
+        f"🚀 Бизнес: {business_count}\n"
+        f"👋 Старт: {start_count}\n\n"
         f"Выберите действие:\n"
-        f"<i>Обновлено: {now}</i>",  # ← Всегда разный текст
+        f"<i>Обновлено: {datetime.now().strftime('%H:%M:%S')}</i>",
         reply_markup=get_admin_keyboard(),
         parse_mode=ParseMode.HTML
     )
