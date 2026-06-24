@@ -121,9 +121,21 @@ def get_stats():
     """Статистика по типам пользователей"""
     data = load_users()
     total = len(data["users"])
-    start_count = sum(1 for u in data["users"].values() if u.get("type") == "start")
-    business_count = sum(1 for u in data["users"].values() if u.get("type") == "business")
-    both_count = total - start_count - business_count  # Те, у кого другой тип
+
+    # Считаем реальные подключения из БД
+    import asyncio
+    async def _count_business():
+        async with aiosqlite.connect(DB) as db:
+            cursor = await db.execute("SELECT COUNT(DISTINCT owner_id) FROM business_connections")
+            return (await cursor.fetchone())[0]
+
+    try:
+        loop = asyncio.get_event_loop()
+        business_count = loop.run_until_complete(_count_business())
+    except:
+        business_count = 0
+
+    start_count = total - business_count
 
     return {
         "total": total,
