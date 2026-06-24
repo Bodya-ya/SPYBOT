@@ -1341,18 +1341,24 @@ async def handle_deleted_business_messages(deleted_messages: BusinessMessagesDel
     bcid = deleted_messages.business_connection_id
     chat_id = deleted_messages.chat.id
     print(f"🗑 DELETED: {deleted_messages.message_ids}")
+    print(f"🗑 bcid: {bcid}")
+    print(f"🗑 chat_id: {chat_id}")
     owner_id = await get_owner_by_business_connection(bcid)
+    print(f"🗑 owner_id: {owner_id}")
     if not owner_id:
+        print("🗑 НЕТ ВЛАДЕЛЬЦА — выход")
         return
 
     sub = await check_subscription(owner_id)
+    print(f"🗑 sub: {sub}")
 
     for msg_id in deleted_messages.message_ids:
         msg_data = await get_message(msg_id, chat_id)
+        print(f"🗑 msg_data: {msg_data}")
 
         if msg_data:
             user_id, user_name, username, content, created_at, is_from_owner, msg_type, file_id, caption, _, chat_name = msg_data
-
+            print(f"🗑 is_from_owner: {msg_data[5]}")
             if sub:
                 notification = format_deleted_message(
                     user_name=user_name,
@@ -1368,6 +1374,7 @@ async def handle_deleted_business_messages(deleted_messages: BusinessMessagesDel
                 )
                 await notify_owner_with_media(owner_id, notification, file_id, msg_type, caption)
             else:
+                print("🗑 СООБЩЕНИЕ НЕ НАЙДЕНО В БД!")
                 notification = format_deleted_message_limited(user_name, msg_type, chat_id)
                 await bot.send_message(
                     chat_id=owner_id,
