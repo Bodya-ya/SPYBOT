@@ -1756,7 +1756,29 @@ async def show_business_users(callback: types.CallbackQuery):
     if callback.from_user.id not in ADMIN_IDS:
         await callback.answer("❌ Нет доступа", show_alert=True)
         return
-    await show_users_list(callback, get_business_users(), "🚀 Бизнес-пользователи")
+    async with aiosqlite.connect(DB) as db:
+        cursor = await db.execute("""
+            SELECT bc.owner_id, o.username, o.first_name
+            FROM business_connections bc
+            LEFT JOIN owners o ON bc.owner_id = o.user_id
+        """)
+        rows = await cursor.fetchall()
+
+    if not rows:
+        await show_users_list(callback, {}, "🚀 Бизнес-пользователи")
+        return
+
+    # Формируем словарь как в JSON
+    users = {}
+    for owner_id, username, first_name in rows:
+        users[str(owner_id)] = {
+            "username": username,
+            "first_name": first_name,
+            "type": "business",
+            "joined_at": "—"
+        }
+
+    await show_users_list(callback, users, "🚀 Бизнес-пользователи")
 
 
 @dp.callback_query(lambda c: c.data == "admin_users_start")
