@@ -37,7 +37,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 bot = Bot(TOKEN)
-dp = Dispatcher()
+from aiogram.fsm.storage.memory import MemoryStorage
+dp = Dispatcher(storage=MemoryStorage())
 
 ADMIN_IDS = [911334605]
 
@@ -2137,9 +2138,6 @@ async def periodic_cleanup():
 # ---------------- ЗАПУСК ----------------
 async def main():
     await init_db()
-
-    from aiogram.fsm.storage.memory import MemoryStorage
-    dp.storage = MemoryStorage()
 
     logger.info("🤖 EyellizSPY запущен")
     logger.info("📝 Отслеживание всех типов сообщений")
