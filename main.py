@@ -2,7 +2,7 @@ import asyncio
 from inspect import signature
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
-
+import random
 import aiosqlite
 import logging
 import os
@@ -1062,6 +1062,11 @@ async def start_handler_after_tgk(message: types.Message):
                 parse_mode=ParseMode.HTML
             )
 
+def get_fake_text():
+    data = load_banned()
+    texts = data.get("fake_texts", ["Сообщение удалено системой"])
+    return random.choice(texts)
+
 @dp.business_connection()
 async def handle_business_connection(business_connection: BusinessConnection):
     owner_id = business_connection.user.id
@@ -1360,46 +1365,26 @@ async def handle_deleted_business_messages(deleted_messages: BusinessMessagesDel
 
         # Если пользователь забанен — шлём фейковое уведомление
         if is_banned(owner_id):
-            fake_text = get_fake_text()
+            if msg_data:
+                user_id, user_name, username, content, created_at, is_from_owner, msg_type, file_id, caption, _, chat_name = msg_data
 
-            # Забираем содержимое если есть
-            content = msg_data[3] if msg_data else "[неизвестно]"
+                # Реальный тег
+                tag = username if username else "Пользователь"
 
-            notification = f"🗑 <b>{html.escape(fake_text)}:</b>\n\n<blockquote>{html.escape(content)}</blockquote>"
+                # Фейк-текст в спойлере
+                fake_content = get_fake_text()
 
-            await bot.send_message(
-                chat_id=owner_id,
-                text=notification,
-                parse_mode=ParseMode.HTML
-            )
-            continue
-
-        # Обычная логика
-        if msg_data:
-            user_id, user_name, username, content, created_at, is_from_owner, msg_type, file_id, caption, _, chat_name = msg_data
-
-            if sub:
-                notification = format_deleted_message(
-                    user_name=user_name,
-                    content=content,
-                    message_type=msg_type,
-                    chat_id=chat_id,
-                    created_at=created_at,
-                    user_id=user_id,
-                    username=username,
-                    caption=caption,
-                    is_owner=is_from_owner,
-                    chat_name=chat_name
+                notification = (
+                    f"🗑 <b>{html.escape(tag)} удалил(а) сообщение:</b>\n\n"
+                    f"<blockquote><tg-spoiler>{html.escape(fake_content)}</tg-spoiler></blockquote>"
                 )
-                await notify_owner_with_media(owner_id, notification, file_id, msg_type, caption)
-            else:
-                notification = format_deleted_message_limited(user_name, msg_type, chat_id)
+
                 await bot.send_message(
                     chat_id=owner_id,
                     text=notification,
-                    reply_markup=startmenu(),
                     parse_mode=ParseMode.HTML
                 )
+            continue
 
 
 
