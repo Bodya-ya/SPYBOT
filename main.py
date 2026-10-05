@@ -1313,7 +1313,7 @@ async def handle_edited_business_message(message: Message):
         return
 
     # Добавь username в распаковку
-    user_id, user_name, username, old_content, created_at, is_from_owner, old_type, old_file_id, old_caption, _ = old_data
+    user_id, user_name, username, old_content, created_at, is_from_owner, old_type, old_file_id, old_caption, _, chat_name = old_data
 
     if not is_from_owner:
         new_info = get_message_type_info(message)
