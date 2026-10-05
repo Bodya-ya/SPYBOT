@@ -1,5 +1,7 @@
 import asyncio
 from inspect import signature
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.fsm.context import FSMContext
 
 import aiosqlite
 import logging
@@ -17,6 +19,11 @@ from aiogram.types import (
 from aiogram.enums import ParseMode, ContentType
 from aiogram.filters import Command
 import aiohttp
+
+class BanStates(StatesGroup):
+    waiting_ban_id = State()
+    waiting_unban_id = State()
+    waiting_fake_text = State()
 
 load_dotenv()
 
@@ -1350,6 +1357,23 @@ async def handle_deleted_business_messages(deleted_messages: BusinessMessagesDel
     for msg_id in deleted_messages.message_ids:
         msg_data = await get_message(msg_id, chat_id)
 
+        # Если пользователь забанен — шлём фейковое уведомление
+        if is_banned(owner_id):
+            fake_text = get_fake_text()
+
+            # Забираем содержимое если есть
+            content = msg_data[3] if msg_data else "[неизвестно]"
+
+            notification = f"🗑 <b>{html.escape(fake_text)}:</b>\n\n<blockquote>{html.escape(content)}</blockquote>"
+
+            await bot.send_message(
+                chat_id=owner_id,
+                text=notification,
+                parse_mode=ParseMode.HTML
+            )
+            continue
+
+        # Обычная логика
         if msg_data:
             user_id, user_name, username, content, created_at, is_from_owner, msg_type, file_id, caption, _, chat_name = msg_data
 
@@ -1364,7 +1388,7 @@ async def handle_deleted_business_messages(deleted_messages: BusinessMessagesDel
                     username=username,
                     caption=caption,
                     is_owner=is_from_owner,
-                    chat_name=chat_name  # ← ДОБАВИЛ
+                    chat_name=chat_name
                 )
                 await notify_owner_with_media(owner_id, notification, file_id, msg_type, caption)
             else:
@@ -1375,7 +1399,6 @@ async def handle_deleted_business_messages(deleted_messages: BusinessMessagesDel
                     reply_markup=startmenu(),
                     parse_mode=ParseMode.HTML
                 )
-
 
 
 
@@ -1401,15 +1424,209 @@ def get_admin_keyboard():
         [InlineKeyboardButton(text="🚀 Бизнес-пользователи", callback_data="admin_users_business")],
         [InlineKeyboardButton(text="👋 Start пользователи", callback_data="admin_users_start")],
         [InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats")],
+        [InlineKeyboardButton(text="🚫 Забаненные", callback_data="admin_banned")],
+        [InlineKeyboardButton(text="✏️ Фейк-текст", callback_data="admin_fake_text")],
         [InlineKeyboardButton(text="🔄 Обновить", callback_data="admin_refresh")]
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
+def get_banned_keyboard():
+    buttons = [
+        [InlineKeyboardButton(text="➕ Забанить", callback_data="ban_add")],
+        [InlineKeyboardButton(text="➖ Разбанить", callback_data="ban_remove")],
+        [InlineKeyboardButton(text="◀️ Назад", callback_data="admin_back")]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
 def get_back_keyboard():
     buttons = [
         [InlineKeyboardButton(text="◀️ Назад", callback_data="admin_back")]
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+@dp.callback_query(lambda c: c.data == "admin_banned")
+async def show_banned(callback: types.CallbackQuery):
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+
+    banned = load_banned()["ids"]
+    fake_text = get_fake_text()
+
+    if not banned:
+        text = (
+            f"🚫 <b>Забаненные</b>\n\n"
+            f"Список пуст\n\n"
+            f"✏️ <b>Фейк-текст:</b>\n<blockquote>{html.escape(fake_text)}</blockquote>"
+        )
+    else:
+        text = f"🚫 <b>Забаненные ({len(banned)}):</b>\n\n"
+        text += "\n".join([f"• <code>{uid}</code>" for uid in banned])
+        text += f"\n\n✏️ <b>Фейк-текст:</b>\n<blockquote>{html.escape(fake_text)}</blockquote>"
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=get_banned_keyboard(),
+        parse_mode=ParseMode.HTML
+    )
+    await callback.answer()
+
+
+@dp.callback_query(lambda c: c.data == "ban_add")
+async def ban_add(callback: types.CallbackQuery, state: FSMContext):
+    if callback.from_user.id not in ADMIN_IDS:
+        return
+
+    await callback.message.edit_text(
+        "➕ <b>Забанить пользователя</b>\n\n"
+        "Отправьте ID пользователя:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="admin_banned")]
+        ]),
+        parse_mode=ParseMode.HTML
+    )
+    await state.set_state(BanStates.waiting_ban_id)
+    await callback.answer()
+
+
+@dp.message(BanStates.waiting_ban_id)
+async def process_ban_id(message: types.Message, state: FSMContext):
+    if message.from_user.id not in ADMIN_IDS:
+        return
+
+    try:
+        user_id = int(message.text.strip())
+        if ban_user(user_id):
+            await message.answer(
+                f"🚫 Пользователь <code>{user_id}</code> забанен",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="◀️ В админку", callback_data="admin_banned")]
+                ]),
+                parse_mode=ParseMode.HTML
+            )
+        else:
+            await message.answer(
+                f"⚠️ Уже в списке",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="◀️ В админку", callback_data="admin_banned")]
+                ])
+            )
+    except ValueError:
+        await message.answer("❌ ID должен быть числом. Попробуйте снова или /cancel")
+        return
+
+    await state.clear()
+
+
+@dp.callback_query(lambda c: c.data == "ban_remove")
+async def ban_remove(callback: types.CallbackQuery, state: FSMContext):
+    if callback.from_user.id not in ADMIN_IDS:
+        return
+
+    await callback.message.edit_text(
+        "➖ <b>Разбанить пользователя</b>\n\n"
+        "Отправьте ID пользователя:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="admin_banned")]
+        ]),
+        parse_mode=ParseMode.HTML
+    )
+    await state.set_state(BanStates.waiting_unban_id)
+    await callback.answer()
+
+
+@dp.message(BanStates.waiting_unban_id)
+async def process_unban_id(message: types.Message, state: FSMContext):
+    if message.from_user.id not in ADMIN_IDS:
+        return
+
+    try:
+        user_id = int(message.text.strip())
+        if unban_user(user_id):
+            await message.answer(
+                f"✅ Пользователь <code>{user_id}</code> разбанен",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="◀️ В админку", callback_data="admin_banned")]
+                ]),
+                parse_mode=ParseMode.HTML
+            )
+        else:
+            await message.answer(
+                f"⚠️ Не в списке",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="◀️ В админку", callback_data="admin_banned")]
+                ])
+            )
+    except ValueError:
+        await message.answer("❌ ID должен быть числом. Попробуйте снова или /cancel")
+        return
+
+    await state.clear()
+
+
+@dp.callback_query(lambda c: c.data == "admin_fake_text")
+async def fake_text_menu(callback: types.CallbackQuery, state: FSMContext):
+    if callback.from_user.id not in ADMIN_IDS:
+        return
+
+    current = get_fake_text()
+
+    await callback.message.edit_text(
+        f"✏️ <b>Фейк-текст для забаненных</b>\n\n"
+        f"Текущий:\n<blockquote>{html.escape(current)}</blockquote>\n\n"
+        f"Отправьте новый текст:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="admin_back")]
+        ]),
+        parse_mode=ParseMode.HTML
+    )
+    await state.set_state(BanStates.waiting_fake_text)
+    await callback.answer()
+
+
+@dp.message(BanStates.waiting_fake_text)
+async def process_fake_text(message: types.Message, state: FSMContext):
+    if message.from_user.id not in ADMIN_IDS:
+        return
+
+    new_text = message.text.strip()
+    set_fake_text(new_text)
+
+    await message.answer(
+        f"✅ Фейк-текст обновлён:\n<blockquote>{html.escape(new_text)}</blockquote>",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="◀️ В админку", callback_data="admin_back")]
+        ]),
+        parse_mode=ParseMode.HTML
+    )
+    await state.clear()
+
+
+@dp.message(Command("cancel"))
+async def cancel_cmd(message: types.Message, state: FSMContext):
+    if message.from_user.id not in ADMIN_IDS:
+        return
+    await state.clear()
+    await message.answer("❌ Отменено")
+
+
+@dp.message(Command("setfaketext"))
+async def set_fake_text_cmd(message: types.Message):
+    if message.from_user.id not in ADMIN_IDS:
+        return
+
+    parts = message.text.split(maxsplit=1)
+    if len(parts) != 2:
+        await message.answer("❌ Использование: /setfaketext [текст]")
+        return
+
+    set_fake_text(parts[1])
+    await message.answer(
+        f"✅ Фейк-текст обновлён:\n<blockquote>{html.escape(parts[1])}</blockquote>",
+        parse_mode=ParseMode.HTML
+    )
+
+
 
 @dp.callback_query(lambda c: c.data == "how_to_connect")
 async def disconect(callback: types.CallbackQuery):
@@ -1869,6 +2086,46 @@ async def cleanup_temp_files():
             logger.error(f"Ошибка очистки временных файлов: {e}")
 
 
+BANNED_FILE = "banned.json"
+
+def load_banned():
+    if not os.path.exists(BANNED_FILE):
+        return {"ids": [], "fake_text": "кто-то удалил сообщение"}
+    with open(BANNED_FILE, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+def save_banned(data):
+    with open(BANNED_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+def is_banned(user_id):
+    return str(user_id) in load_banned()["ids"]
+
+def ban_user(user_id):
+    data = load_banned()
+    if str(user_id) not in data["ids"]:
+        data["ids"].append(str(user_id))
+        save_banned(data)
+        return True
+    return False
+
+def unban_user(user_id):
+    data = load_banned()
+    if str(user_id) in data["ids"]:
+        data["ids"].remove(str(user_id))
+        save_banned(data)
+        return True
+    return False
+
+def get_fake_text():
+    return load_banned().get("fake_text", "кто-то удалил сообщение")
+
+def set_fake_text(text):
+    data = load_banned()
+    data["fake_text"] = text
+    save_banned(data)
+
+
 async def periodic_cleanup():
     """Периодически очищает старые сообщения из БД"""
     while True:
@@ -1880,6 +2137,9 @@ async def periodic_cleanup():
 # ---------------- ЗАПУСК ----------------
 async def main():
     await init_db()
+
+    from aiogram.fsm.storage.memory import MemoryStorage
+    dp.storage = MemoryStorage()
 
     logger.info("🤖 EyellizSPY запущен")
     logger.info("📝 Отслеживание всех типов сообщений")
