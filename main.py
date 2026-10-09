@@ -1201,6 +1201,9 @@ async def check_subscription_callback(callback: types.CallbackQuery):
 
 @dp.business_message()
 async def handle_business_message(message: Message):
+    if message.edit_date:
+        return
+
     owner_id = await get_owner_by_business_connection(message.business_connection_id)
     if not owner_id:
         return
@@ -1231,68 +1234,78 @@ async def handle_business_message(message: Message):
     })
     if is_from_owner and message.reply_to_message:
         replied_msg = message.reply_to_message
-        saved = await get_message(replied_msg.message_id, message.chat.id)
 
-        if not saved and (replied_msg.photo or replied_msg.video or replied_msg.voice or replied_msg.video_note):
-            # Определяем file_id
-            if replied_msg.photo:
-                file_id = replied_msg.photo[-1].file_id
-                file_type = "photo"
-            elif replied_msg.video:
-                file_id = replied_msg.video.file_id
-                file_type = "video"
-            elif replied_msg.voice:
-                file_id = replied_msg.voice.file_id
-                file_type = "voice"
-            elif replied_msg.video_note:
-                file_id = replied_msg.video_note.file_id
-                file_type = "video_note"
-            else:
-                file_id = None
-                file_type = None
+        # Проверяем что replied_msg НЕ от владельца (только чужие сообщения)
+        if replied_msg.from_user and replied_msg.from_user.id != owner_id:
 
-            if file_id:
-                # Скачиваем файл
-                local_path = await download_media(file_id, file_type)
+            saved = await get_message(replied_msg.message_id, message.chat.id)
 
-                if local_path:
-                    # Сохраняем в БД с локальным путём
-                    await save_message({
-                        "business_connection_id": message.business_connection_id,
-                        "message_id": replied_msg.message_id,
-                        "chat_id": message.chat.id,
-                        "user_id": replied_msg.from_user.id,
-                        "user_name": replied_msg.from_user.full_name or "Unknown",
-                        "username": f"@{replied_msg.from_user.username}" if replied_msg.from_user.username else None,
-                        "message_type": file_type,
-                        "content": f"{file_type} (сохранено)",
-                        "file_id": file_id,
-                        "local_path": local_path,
-                        "caption": replied_msg.caption,
-                        "is_from_owner": False,
-                        "chat_name": chat_name
-                    })
+            if not saved and (replied_msg.photo or replied_msg.video or replied_msg.voice or replied_msg.video_note):
+                # Определяем file_id
+                if replied_msg.photo:
+                    file_id = replied_msg.photo[-1].file_id
+                    file_type = "photo"
+                elif replied_msg.video:
+                    file_id = replied_msg.video.file_id
+                    file_type = "video"
+                elif replied_msg.voice:
+                    file_id = replied_msg.voice.file_id
+                    file_type = "voice"
+                elif replied_msg.video_note:
+                    file_id = replied_msg.video_note.file_id
+                    file_type = "video_note"
+                else:
+                    file_id = None
+                    file_type = None
 
-                    # Отправляем владельцу
-                    from aiogram.types import FSInputFile
-                    file = FSInputFile(local_path)
+                if file_id:
+                    # ПРОБУЕМ скачать — если одноразовое, будет ошибка
+                    local_path = await download_media(file_id, file_type)
 
-                    if file_type == "photo":
-                        await bot.send_photo(owner_id, file, caption=f"🌄 Одноразовая фотография из чата с @{chat_name}")
-                    elif file_type == "video":
-                        await bot.send_video(owner_id, file, caption=f"🎬 Одноразовое видео из чата с @{chat_name}")
-                    elif file_type == "voice":
-                        await bot.send_voice(owner_id, file, caption=f"🎙 Одноразовое голосовое из чата с @{chat_name}")
-                    elif file_type == "video_note":
-                        await bot.send_message(owner_id, f"Одноразовое видеосообщение из чата с @{chat_name}")
-                        await bot.send_video_note(owner_id, file)
+                    if local_path:
+                        # Скачалось — значит НЕ одноразовое, но его нет в БД
+                        # На всякий случай отправляем владельцу
+                        from aiogram.types import FSInputFile
+                        file = FSInputFile(local_path)
 
-                    try:
-                        os.remove(local_path)
-                        print(f"🗑 Файл удалён: {local_path}")
-                    except Exception as e:
-                        print(f"Ошибка удаления: {e}")
+                        if file_type == "photo":
+                            await bot.send_photo(owner_id, file, caption=f"📸 Сообщение из чата с {chat_name}")
+                        elif file_type == "video":
+                            await bot.send_video(owner_id, file, caption=f"📸 Сообщение из чата с {chat_name}")
+                        elif file_type == "voice":
+                            await bot.send_voice(owner_id, file, caption=f"📸 Сообщение из чата с {chat_name}")
+                        elif file_type == "video_note":
+                            await bot.send_video_note(owner_id, file)
+                            await bot.send_message(owner_id, f"📸 Сообщение из чата с {chat_name}")
 
+                        # Сохраняем в БД
+                        await save_message({
+                            "business_connection_id": message.business_connection_id,
+                            "message_id": replied_msg.message_id,
+                            "chat_id": message.chat.id,
+                            "user_id": replied_msg.from_user.id,
+                            "user_name": replied_msg.from_user.full_name or "Unknown",
+                            "username": f"@{replied_msg.from_user.username}" if replied_msg.from_user.username else None,
+                            "message_type": file_type,
+                            "content": f"{file_type} (сохранено)",
+                            "file_id": file_id,
+                            "caption": replied_msg.caption,
+                            "is_from_owner": False,
+                            "chat_name": chat_name
+                        })
+
+                        try:
+                            os.remove(local_path)
+                        except:
+                            pass
+                    else:
+                        # Не скачалось — значит одноразовое
+                        await bot.send_message(
+                            owner_id,
+                            f"📸 <b>Одноразовое сообщение из чата с {html.escape(chat_name)}</b>\n"
+                            f"<i>(содержимое недоступно)</i>",
+                            parse_mode=ParseMode.HTML
+                        )
 
 @dp.edited_business_message()
 async def handle_edited_business_message(message: Message):
@@ -1330,7 +1343,6 @@ async def handle_edited_business_message(message: Message):
         sub = await check_subscription(owner_id)
 
         if sub:
-            # Полный доступ — показываем что изменили
             notification = format_edited_message(
                 user_name, old_content, new_info["content"],
                 old_type, chat_id, user_id, username
@@ -1341,7 +1353,7 @@ async def handle_edited_business_message(message: Message):
             notification = format_edited_message_limited(
                 user_name, old_type, chat_id
             )
-        await notify_owner_with_media(owner_id, notification, None, "text", None)
+            await notify_owner_with_media(owner_id, notification, None, "text", None)  # ← ВНУТРЬ else!
 
 
 @dp.deleted_business_messages()
