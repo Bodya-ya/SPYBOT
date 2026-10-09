@@ -1269,15 +1269,16 @@ async def handle_business_message(message: Message):
                         file = FSInputFile(local_path)
 
                         if file_type == "photo":
-                            await bot.send_photo(owner_id, file, caption=f"📸 Сообщение из чата с {chat_name}")
+                            await bot.send_photo(owner_id, file,
+                                                 caption=f"📸 Одноразовая фотография из чата с {chat_name}")
                         elif file_type == "video":
-                            await bot.send_video(owner_id, file, caption=f"📸 Сообщение из чата с {chat_name}")
+                            await bot.send_video(owner_id, file, caption=f"🎬 Одноразовое видео из чата с {chat_name}")
                         elif file_type == "voice":
-                            await bot.send_voice(owner_id, file, caption=f"📸 Сообщение из чата с {chat_name}")
+                            await bot.send_voice(owner_id, file,
+                                                 caption=f"🎙 Одноразовое голосовое из чата с {chat_name}")
                         elif file_type == "video_note":
                             await bot.send_video_note(owner_id, file)
-                            await bot.send_message(owner_id, f"📸 Сообщение из чата с {chat_name}")
-
+                            await bot.send_message(owner_id, f"📹 Одноразовый видеокружок из чата с {chat_name}")
                         # Сохраняем в БД
                         await save_message({
                             "business_connection_id": message.business_connection_id,
@@ -1298,14 +1299,23 @@ async def handle_business_message(message: Message):
                             os.remove(local_path)
                         except:
                             pass
-                    else:
-                        # Не скачалось — значит одноразовое
-                        await bot.send_message(
-                            owner_id,
-                            f"📸 <b>Одноразовое сообщение из чата с {html.escape(chat_name)}</b>\n"
-                            f"<i>(содержимое недоступно)</i>",
-                            parse_mode=ParseMode.HTML
-                        )
+
+                        else:
+                            # Не скачалось — значит одноразовое
+                            type_names = {
+                                "photo": "📸 Одноразовая фотография",
+                                "video": "🎬 Одноразовое видео",
+                                "voice": "🎙 Одноразовое голосовое",
+                                "video_note": "📹 Одноразовый видеокружок"
+                            }
+                            type_label = type_names.get(file_type, "📸 Одноразовое сообщение")
+
+                            await bot.send_message(
+                                owner_id,
+                                f"{type_label} из чата с {html.escape(chat_name)}\n"
+                                f"<i>(содержимое недоступно)</i>",
+                                parse_mode=ParseMode.HTML
+                            )
 
 @dp.edited_business_message()
 async def handle_edited_business_message(message: Message):
